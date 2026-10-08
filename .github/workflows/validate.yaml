@@ -25,7 +25,8 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    if: github.ref == 'refs/heads/main' && success()
+    # Releases are made by hand in the fork
+    if: github.repository == 'SplinterHead/ha-honeygain' && github.ref == 'refs/heads/main' && success()
     steps:
       - uses: actions/checkout@v4
         with:
