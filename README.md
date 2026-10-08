@@ -1,4 +1,6 @@
 # HACS Honeygain
+> Fork of [SplinterHead/ha-honeygain](https://github.com/SplinterHead/ha-honeygain) with the fixes proposed upstream in #38, #39 and #40 (stable device ids, removed devices, error handling). New upstream commits are merged weekly.
+
 The Honeygain integration lets you access account balances and daily earnings from [Honeygain](https://r.honeygain.me/LEWISF7B55).
 
 Honeygain is a platform where you can sell your idle bandwidth to make a bit of extra cash. This integration will let you keep an eye on your account balances.

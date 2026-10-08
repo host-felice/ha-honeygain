@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hacs-honeygain"
-version = "1.5.0"
+version = "1.5.2"
 description = "Honeygain integration for HomeAssistant"
 authors = ["Lewis England"]
 license = "GNU GPL V3"
@@ -21,3 +21,7 @@ python-semantic-release = "^9.9.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
