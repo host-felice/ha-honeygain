@@ -8,12 +8,13 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import Throttle
 from pyHoneygain import HoneyGain
+from requests import RequestException
 
-from .config_flow import CannotConnect, InvalidAuth
 from .const import DOMAIN, LOGGER, UPDATE_INTERVAL_MINS
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.BUTTON]
@@ -23,8 +24,16 @@ UPDATE_INTERVAL = timedelta(minutes=UPDATE_INTERVAL_MINS)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Honeygain from a config entry."""
-    hg_account = await validate_authentication(hass, entry)
+    try:
+        hg_account = await validate_authentication(hass, entry)
+    # pyHoneygain raises KeyError when the login answer has no token
+    except (RequestException, KeyError) as exc:
+        raise ConfigEntryNotReady(
+            "Cannot log in to Honeygain, check the credentials if this persists"
+        ) from exc
     await hass.async_add_executor_job(hg_account.update)
+    if not hg_account.available:
+        raise ConfigEntryNotReady("Cannot fetch data from Honeygain")
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hg_account
     # Minor version 2: device ids no longer built from the IP
     if entry.minor_version < 2:
@@ -114,6 +123,8 @@ class HoneygainData:
         self.today_stats: dict = {}
         self.today_stats_jt: dict = {}
         self.user: dict = {}
+        # None until the first update, so a failure at startup is logged too
+        self.available: bool | None = None
 
     @Throttle(UPDATE_INTERVAL)
     def update(self) -> None:
@@ -121,24 +132,40 @@ class HoneygainData:
         try:
             # Use the V1 endpoint to pull basic details
             self.honeygain.set_api_version(version="/v1", reload=True)
-            self.balances = self.honeygain.balances()
-            self.stats = self.honeygain.stats()
-            self.stats_jt = self.honeygain.stats_jt()
-            self.today_stats = self.honeygain.stats_today()
-            self.today_stats_jt = self.honeygain.stats_today_jt()
-            self.user = self.honeygain.me()
+            data = {
+                "balances": self.honeygain.balances(),
+                "stats": self.honeygain.stats(),
+                "stats_jt": self.honeygain.stats_jt(),
+                "today_stats": self.honeygain.stats_today(),
+                "today_stats_jt": self.honeygain.stats_today_jt(),
+                "user": self.honeygain.me(),
+            }
 
             # Use the V2 endpoint to pull advanced details
             self.honeygain.set_api_version(version="/v2", reload=True)
-            self.devices = self.honeygain.devices()
-
+            data["devices"] = self.honeygain.devices()
+        # pyHoneygain raises requests errors, its own errors or plain parsing
+        # errors on unexpected answers: any of them is a failed update
+        except Exception as exc:  # pylint: disable=broad-except
+            failed = repr(exc)
+        else:
+            # pyHoneygain returns False on HTTP errors, None or {} on a missing payload
+            failed = ", ".join(k for k, v in data.items() if v in (False, None, {}))
+        finally:
             # Reset back to the V1 endpoint
             self.honeygain.set_api_version(version="/v1", reload=True)
 
-        except CannotConnect:
-            LOGGER.warning("Failed to connect to Honeygain for update")
-        except InvalidAuth:
-            LOGGER.warning("Failed to authenticate with Honeygain for update")
+        # Keep the last good data and log once per outage, not on every entity
+        if failed:
+            if self.available is not False:
+                LOGGER.warning("Honeygain update failed (%s)", failed)
+            self.available = False
+            return
+        if self.available is False:
+            LOGGER.info("Honeygain update succeeded")
+        for key, value in data.items():
+            setattr(self, key, value)
+        self.available = True
 
     def get_device(self, device_id: str) -> dict | None:
         """Return the device with this id, or None if it is no longer reported."""
