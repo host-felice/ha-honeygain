@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import Throttle
 from pyHoneygain import HoneyGain
+import requests
 from requests import RequestException
 
 from .const import DOMAIN, LOGGER, UPDATE_INTERVAL_MINS
@@ -26,15 +32,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Honeygain from a config entry."""
     try:
         hg_account = await validate_authentication(hass, entry)
-    # pyHoneygain raises KeyError when the login answer has no token
+    # Rejected credentials raise ConfigEntryAuthFailed, which asks for new ones
     except (RequestException, KeyError) as exc:
-        raise ConfigEntryNotReady(
-            "Cannot log in to Honeygain, check the credentials if this persists"
-        ) from exc
+        raise ConfigEntryNotReady("Cannot log in to Honeygain") from exc
+    if entry.unique_id is None:
+        # Entries made before 1.6.2 have none: lets the config flow spot duplicates
+        hass.config_entries.async_update_entry(
+            entry, unique_id=entry.data[CONF_EMAIL].lower()
+        )
     await hass.async_add_executor_job(hg_account.update)
     if not hg_account.available:
         raise ConfigEntryNotReady("Cannot fetch data from Honeygain")
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hg_account
+    # Entities are made at setup: a client added later needs a reload
+    hg_account.known_ids = {dev.get("id") for dev in hg_account.devices}
+    hg_account.on_new_device = lambda: hass.add_job(
+        hass.config_entries.async_reload, entry.entry_id
+    )
     # Minor version 2: device ids no longer built from the IP
     if entry.minor_version < 2:
         await _migrate_ip_identifiers(hass, entry, hg_account.devices)
@@ -112,10 +126,24 @@ async def validate_authentication(
     """Create and authenticate an API instance."""
     honeygain = HoneyGain()
     await hass.async_add_executor_job(
-        honeygain.login, entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD]
+        _login, honeygain, entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD]
     )
     hg_account = HoneygainData(honeygain)
     return hg_account
+
+
+def _login(honeygain: HoneyGain, email: str, password: str) -> None:
+    """Log in, telling rejected credentials apart from other failures."""
+    # pyHoneygain's login raises the same KeyError for both
+    answer = requests.post(
+        f"{honeygain.API_BASE_URL}/users/tokens",
+        json={"email": email, "password": password},
+        timeout=30,
+    )
+    if answer.status_code == 401:
+        raise ConfigEntryAuthFailed("Honeygain rejected the credentials")
+    answer.raise_for_status()
+    honeygain.set_jwt_token(answer.json()["data"]["access_token"])
 
 
 # pylint: disable=too-few-public-methods
@@ -129,6 +157,8 @@ class HoneygainData:
         self.devices: dict = {}
         self.today_stats: dict = {}
         self.user: dict = {}
+        self.known_ids: set = set()
+        self.on_new_device: Callable[[], None] | None = None
         # None until the first update, so a failure at startup is logged too
         self.available: bool | None = None
 
@@ -169,6 +199,8 @@ class HoneygainData:
         for key, value in data.items():
             setattr(self, key, value)
         self.available = True
+        if self.on_new_device and {d.get("id") for d in self.devices} - self.known_ids:
+            self.on_new_device()
 
     def get_device(self, device_id: str) -> dict | None:
         """Return the device with this id, or None if it is no longer reported."""
@@ -177,7 +209,9 @@ class HoneygainData:
     def open_daily_pot(self) -> None:
         """Open the daily pot if it's available."""
         try:
-            self.honeygain.open_honeypot()
-        except Exception as exc:
-            LOGGER.error("Failed to open daily pot: %s", exc)
-            raise Exception from exc
+            opened = self.honeygain.open_honeypot()["success"]
+        except Exception as exc:  # pylint: disable=broad-except
+            raise HomeAssistantError(f"Failed to open the Lucky Pot: {exc!r}") from exc
+        # pyHoneygain gives up quietly when the pot is already open or not ready
+        if not opened:
+            raise HomeAssistantError("Lucky Pot already opened or not available yet")

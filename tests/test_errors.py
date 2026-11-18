@@ -29,9 +29,9 @@ def entry_for(hass):
     return entry
 
 
-async def test_offline_at_startup_retries(hass):
+async def test_offline_at_startup_retries(hass, login):
     api = fake_api()
-    api.login.side_effect = ConnectionError("down")
+    login.side_effect = ConnectionError("down")
     entry = entry_for(hass)
     with patch("custom_components.honeygain.HoneyGain", return_value=api):
         await hass.config_entries.async_setup(entry.entry_id)
@@ -102,9 +102,9 @@ async def test_bad_answers_after_setup(hass):
     assert hass.states.get("button.open_lucky_pot").state == "unavailable"
 
 
-async def test_login_without_token_retries(hass):
+async def test_login_without_token_retries(hass, login):
     api = fake_api()
-    api.login.side_effect = KeyError("data")
+    login.return_value.json.return_value = {"type": 429}
     entry = entry_for(hass)
     with patch("custom_components.honeygain.HoneyGain", return_value=api):
         await hass.config_entries.async_setup(entry.entry_id)
