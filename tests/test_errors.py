@@ -20,7 +20,6 @@ def fake_api():
     g = {"gathering": {"credits": 1, "bytes": 10}, "total": {"credits": 1},
          "referral": {"credits": 0}, "winning": {"credits": 0}}
     api.stats_today.return_value = g
-    api.stats_today_jt.return_value = g
     return api
 
 

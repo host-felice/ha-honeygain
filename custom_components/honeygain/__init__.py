@@ -119,9 +119,7 @@ class HoneygainData:
         self.balances: dict = {}
         self.devices: dict = {}
         self.stats: dict = {}
-        self.stats_jt: dict = {}
         self.today_stats: dict = {}
-        self.today_stats_jt: dict = {}
         self.user: dict = {}
         # None until the first update, so a failure at startup is logged too
         self.available: bool | None = None
@@ -135,9 +133,7 @@ class HoneygainData:
             data = {
                 "balances": self.honeygain.balances(),
                 "stats": self.honeygain.stats(),
-                "stats_jt": self.honeygain.stats_jt(),
                 "today_stats": self.honeygain.stats_today(),
-                "today_stats_jt": self.honeygain.stats_today_jt(),
                 "user": self.honeygain.me(),
             }
 
