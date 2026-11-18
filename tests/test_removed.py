@@ -43,3 +43,17 @@ async def test_removed_device(hass):
     with patch("custom_components.honeygain.HoneygainData.update"):
         await async_update_entity(hass, sensor)
     assert hass.states.get(sensor).state == "1"
+
+
+async def test_jmpt_entities_removed(hass):
+    from homeassistant.helpers import entity_registry as er
+    entry = MockConfigEntry(domain="honeygain", data={"email": "a@b.c", "password": "x"})
+    entry.add_to_hass(hass)
+    entreg = er.async_get(hass)
+    jt = entreg.async_get_or_create("sensor", "honeygain", "honeygain-ref-today_credits_jt",
+                                    config_entry=entry)
+    with patch("custom_components.honeygain.HoneyGain", return_value=fake_api()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entreg.async_get(jt.entity_id) is None
+    assert entreg.async_get_entity_id("sensor", "honeygain", "honeygain-ref-today_credits")

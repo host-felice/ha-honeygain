@@ -39,6 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry.minor_version < 2:
         await _migrate_ip_identifiers(hass, entry, hg_account.devices)
         hass.config_entries.async_update_entry(entry, minor_version=2)
+    _remove_jmpt_entities(hass, entry)
 
     # Set up all platforms for this device/entry.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -65,6 +66,14 @@ async def async_remove_config_entry_device(
         domain == DOMAIN and ident in current
         for domain, ident in device_entry.identifiers
     )
+
+
+def _remove_jmpt_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop the JMPT sensors left in the registry: JumpTask retired JMPT."""
+    ent_reg = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if entity.unique_id.endswith("_jt"):
+            ent_reg.async_remove(entity.entity_id)
 
 
 async def _migrate_ip_identifiers(
