@@ -127,7 +127,6 @@ class HoneygainData:
         self.honeygain: HoneyGain = honeygain
         self.balances: dict = {}
         self.devices: dict = {}
-        self.stats: dict = {}
         self.today_stats: dict = {}
         self.user: dict = {}
         # None until the first update, so a failure at startup is logged too
@@ -141,7 +140,6 @@ class HoneygainData:
             self.honeygain.set_api_version(version="/v1", reload=True)
             data = {
                 "balances": self.honeygain.balances(),
-                "stats": self.honeygain.stats(),
                 "today_stats": self.honeygain.stats_today(),
                 "user": self.honeygain.me(),
             }
